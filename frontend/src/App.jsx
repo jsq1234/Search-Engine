@@ -1,33 +1,59 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import SearchBar from './SearchBar'
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [query, setQuery] = useState("")
+  const [result, setResult] = useState([])
+
+  const fetchDocuments = async () => {
+    try {
+      const response = await fetch("http://localhost:5000/api/search", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: query,
+          k: 10,
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status : ${response.ok}`);
+      }
+
+      const responseData = await response.json();
+      setResult(responseData);
+    } catch (error) {
+      console.log('Error during POST request:', error)
+    }
+  }
 
   return (
     <>
-      <div>
-        <a href="https://vitejs.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+      {result.length == 0 && (
+        <h1 className='text-[6rem] md:text-[10rem] font-serif xl:w-[70%] 
+        mx-auto xl:rounded-full dark:text-blue-100 
+        md:mt-[8rem] mt-[4rem] text-center bg-[#000000]'>
+          Search
+        </h1>
+      )}
+
+      <SearchBar queryVar={query} setQuery={setQuery} onSubmit={fetchDocuments} />
+
+
+      <div className='flex flex-col gap-4 mt-5'>
+        {result.length != 0 && (
+          result.map((elem, index) => (
+            <div key={index} className='w-[75%] mx-auto border-4 rounded-xl p-3 pr-5 pl-5 hover:bg-[#156161] hover:shadow-2xl'>
+              <div className='flex items-center justify-between gap-4'>
+                <h1 className='text-2xl font-semibold'>{elem.title}</h1>
+                <h1 className='text-xl font-semibold'>[{elem.score}]</h1>
+              </div>
+              <p className='text-xl mt-3'>{elem.body}</p>
+            </div>
+          ))
+        )}v
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
+
     </>
   )
 }
