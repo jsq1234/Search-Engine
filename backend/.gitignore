@@ -16,3 +16,4 @@ build/
 covid_qrels.txt
 output.json
 index.txt
+document_norm.pkl

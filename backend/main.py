@@ -145,6 +145,8 @@ class SearchEngine():
         self.vocabulary = []
         self.query = None
         self.doc_id_mapping = {}
+        dt = ir_datasets.load("beir/trec-covid")
+        self.docs = dt.docs
         self.loadIndex()
 
     def loadIndex(self):
@@ -235,6 +237,15 @@ class SearchEngine():
 
         return sorted_K
 
+    def get_results(self, ranked_docs):
+        results = []
+        for (doc_id, score) in ranked_docs:
+            doc_id = int(doc_id)
+            title = self.docs[self.doc_id_mapping[doc_id]][2]
+            body = self.docs[self.doc_id_mapping[doc_id]][1]
+            results.append({"title" : title, "score" : float(score), "body" : body})
+        return results
+            
     def display_result(self, ranked_docs):
 
         dataset = ir_datasets.load("beir/trec-covid")
@@ -505,6 +516,7 @@ class EvaluationMetrics():
 
         return avg_precision
 
-engine = SearchEngine('index.txt')
-res = engine.searchQuery('coronavirus origin')
-engine.display_result(res)
+if __name__ == '__main__':
+    engine = SearchEngine('index.txt')
+    res = engine.searchQuery('coronavirus origin')
+    engine.display_result(res)
