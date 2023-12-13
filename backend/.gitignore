@@ -12,3 +12,7 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+covid_qrels.txt
+output.json
+index.txt
