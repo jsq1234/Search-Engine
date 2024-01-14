@@ -6,14 +6,12 @@ app = Flask(__name__)
 CORS(app)
 engine = SearchEngine('index.txt')
 
-@app.post('/api/search')
+@app.get('/api/search')
 def search():
-    data = request.get_json()
-    query = data.get('query', ' ')
-    k = data.get('k', 10)
+    query = request.args.get('query') or ''
+    k = int(request.args.get('k')) or 10
     ranked_docs = engine.searchQuery(query, k)
     results = engine.get_results(ranked_docs)
-
     return jsonify(results)
 
 if __name__ == '__main__':

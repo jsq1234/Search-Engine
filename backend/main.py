@@ -21,7 +21,7 @@ class Preprocess():
         self.ps = PorterStemmer()
         self.stop_words = set(stopwords.words('english'))
         self.translator = str.maketrans('', '', string.punctuation)
-        #self.nlp = spacy.load('en_core_web_sm')
+        # self.nlp = spacy.load('en_core_web_sm')
 
     def preprocess(self, text: str) -> str:
         words = word_tokenize(text)
@@ -243,14 +243,15 @@ class SearchEngine():
             doc_id = int(doc_id)
             title = self.docs[self.doc_id_mapping[doc_id]][2]
             body = self.docs[self.doc_id_mapping[doc_id]][1]
-            results.append({"title" : title, "score" : float(score), "body" : body})
+            results.append(
+                {"title": title, "score": float(score), "body": body})
         return results
-            
+
     def display_result(self, ranked_docs):
 
         dataset = ir_datasets.load("beir/trec-covid")
         docs = dataset.docs
-
+        print(type(ranked_docs))
         for (doc_id, score) in ranked_docs:
             doc_id = int(doc_id)
             title = docs[self.doc_id_mapping[doc_id]][2]
@@ -281,6 +282,9 @@ class SearchEngine():
                 query, relevant_docs, non_relevant_docs)
 
             print(new_query_vector)
+
+    def automatic(self, ranked_docs):
+        pass
 
     def top_k_docs(self, query, k):
 
@@ -354,7 +358,6 @@ class SearchEngine():
         centroid_diff.clip(min=0, out=centroid_diff)
 
         new_query_vector = query_vector + centroid_diff
-
 
         new_query_vector = np.array(new_query_vector).flatten()
 
@@ -516,7 +519,11 @@ class EvaluationMetrics():
 
         return avg_precision
 
+
 if __name__ == '__main__':
     engine = SearchEngine('index.txt')
     res = engine.searchQuery('coronavirus origin')
     engine.display_result(res)
+
+    # metric = EvaluationMetrics('covid_qrels.txt')
+    # print(metric.mean_average_precision())
