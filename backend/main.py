@@ -13,6 +13,7 @@ from multiprocessing import Pool, cpu_count
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import reinforce
 
 
 class Preprocess():
@@ -147,6 +148,7 @@ class SearchEngine():
         self.doc_id_mapping = {}
         dt = ir_datasets.load("beir/trec-covid")
         self.docs = dt.docs
+        self.precision_output = []
         self.loadIndex()
 
     def loadIndex(self):
@@ -197,7 +199,7 @@ class SearchEngine():
 
             print("Index loaded to memory")
 
-    def searchQuery(self, query: str, k=10):
+    def searchQuery(self, query: str, k=20):
 
         self.query = query
         self.loadIndex()
@@ -248,43 +250,104 @@ class SearchEngine():
         return results
 
     def display_result(self, ranked_docs):
+        metrics = EvaluationMetrics('covid_qrels.txt')
 
-        dataset = ir_datasets.load("beir/trec-covid")
-        docs = dataset.docs
-        print(type(ranked_docs))
-        for (doc_id, score) in ranked_docs:
-            doc_id = int(doc_id)
-            title = docs[self.doc_id_mapping[doc_id]][2]
-            text = docs[self.doc_id_mapping[doc_id]][1]
-            print('------------------------------------------------------')
-            print()
-            print(title, '[', score, ']', '[', doc_id, ']')
-            print(text)
-            print()
-            print('------------------------------------------------------')
+        relevant_list = metrics.relevance_judgements[self.query]
 
-        res = input("Do you wish to give feedback? [y/n]: ")
+        # calculate precisions 10 times for a query
+        ranked_docs_temp = ranked_docs
+        query = self.query
 
-        if res == 'y':
-            relevant_docs = input("Enter relevant documents: ")
-            relevant_docs = [ranked_docs['doc_id']
-                             [int(item)] for item in relevant_docs.split()]
+        # Calculate the initial precision of untouched tf-idf scores
+        precision = metrics._average_precision(relevant_list, ranked_docs_temp)
+        print(f'Initial query : {query}, initial precision : {precision}')
 
-            non_relevant_docs = input("Enter non relevant documents: ")
-            non_relevant_docs = [ranked_docs['doc_id'][int(item)]
-                                 for item in non_relevant_docs.split()]
+        precision_list = []
+        precision_list.append((precision, query))
 
-            self.preprocessor = Preprocess([self.query])
-            self.preprocessor.run_fast()
-            query = self.preprocessor.get_docs()[0]
+        for _ in range(10):
+            (ranked_docs_temp, query) = self.automatic(metrics, ranked_docs_temp)
 
-            new_query_vector = self._relevance_feedback_builtin(
-                query, relevant_docs, non_relevant_docs)
+            precision = metrics._average_precision(
+                relevant_list, ranked_docs_temp)
 
-            print(new_query_vector)
+            precision_list.append((precision, query))
 
-    def automatic(self, ranked_docs):
-        pass
+        # print(precision_list)
+
+        (max_precision, query) = max(
+            precision_list[1:], key=lambda x: x[0])
+
+        initial_precision = precision_list[0][0]
+
+        print(f'({max_precision}, {query})')
+
+        if (initial_precision != 0):
+            percentage_incr = (
+                max_precision - initial_precision)/initial_precision
+            print(f'Percentage Increase : {round(percentage_incr*100,2)}%')
+
+        self.precision_output.append(
+            (round(initial_precision, 3), round(max_precision, 3)))
+        print()
+
+        # for (doc_id, score) in ranked_docs:
+        #     doc_id = int(doc_id)
+        #     title = docs[self.doc_id_mapping[doc_id]][2]
+        #     text = docs[self.doc_id_mapping[doc_id]][1]
+        #     print('------------------------------------------------------')
+        #     print()
+        #     print(title, '[', score, ']', '[', doc_id, ']')
+        #     print(text)
+        #     print()
+        #     print('------------------------------------------------------')
+
+        # res = input("Do you wish to give feedback? [y/n]: ")
+
+        # if res == 'y':
+        #     relevant_docs = input("Enter relevant documents: ")
+        #     relevant_docs = [ranked_docs['doc_id']
+        #                      [int(item)] for item in relevant_docs.split()]
+
+        #     non_relevant_docs = input("Enter non relevant documents: ")
+        #     non_relevant_docs = [ranked_docs['doc_id'][int(item)]
+        #                          for item in non_relevant_docs.split()]
+
+        #     self.preprocessor = Preprocess([self.query])
+        #     self.preprocessor.run_fast()
+        #     query = self.preprocessor.get_docs()[0]
+
+        #     new_query_vector = self._relevance_feedback_builtin(
+        #         query, relevant_docs, non_relevant_docs)
+
+        #     print(new_query_vector)
+
+    def automatic(self, metrics, ranked_docs):
+
+        query_qrels = metrics.relevance_judgements[self.query]
+
+        relevant_docs = [doc_id for (doc_id, _) in query_qrels]
+        relevant_doc_ids = list(set(relevant_docs) &
+                                set(ranked_docs['doc_id']))
+
+        nonrelevant_doc_ids = list(
+            set(ranked_docs['doc_id']) - set(relevant_doc_ids))
+
+        # print(f'Relevent doc ids : {relevant_doc_ids}')
+        # print(f'Non relevant doc ids : {nonrelevant_doc_ids}')
+
+        self.preprocessor = Preprocess([self.query])
+        self.preprocessor.run_fast()
+        query = self.preprocessor.get_docs()[0]
+
+        new_query_vector = self._relevance_feedback_builtin(
+            query, relevant_doc_ids, nonrelevant_doc_ids)
+
+        new_query = ' '.join([term for (term, _) in new_query_vector[:5]])
+
+        new_ranked_docs = self.top_k_docs(new_query, k=20)
+
+        return (new_ranked_docs, new_query)
 
     def top_k_docs(self, query, k):
 
@@ -295,15 +358,16 @@ class SearchEngine():
 
         query_weights /= np.linalg.norm(query_weights)
 
-        for (term, weight) in zip(query_terms, query_weights):
+        for (term, weight1) in zip(query_terms, query_weights):
             posting_list = self.postingList[term]
 
             idf = math.log10(self.N/len(posting_list))
 
             for (doc_id, _tf) in posting_list:
                 tf = 1 + math.log10(_tf)
-                weight = tf*idf
-                self.scores[doc_id] += weight*weight
+                weight2 = tf*idf
+
+                self.scores[doc_id] += weight1*weight2
 
         self.scores = self.scores/self.document_norm
 
@@ -314,7 +378,6 @@ class SearchEngine():
             k, range(self.N), key=lambda i: docid_score['score'][i])
 
         top_k_documents = docid_score[top_k_indices]
-
         self.scores.fill(0)
 
         return top_k_documents
@@ -351,9 +414,15 @@ class SearchEngine():
         document_rmatrix = tfidf[:n1]
         document_nrmatrix = tfidf[n1:]
 
-        centroid_diff = beta * \
-            np.mean(document_rmatrix, axis=0) - gamma * \
-            np.mean(document_nrmatrix, axis=0)
+        rmean = 0
+        nrmean = 0
+
+        if len(relevant_docid) != 0:
+            rmean = np.mean(document_rmatrix, axis=0)
+        if len(non_relevant_docid) != 0:
+            nrmean = np.mean(document_nrmatrix, axis=0)
+
+        centroid_diff = beta * rmean - gamma * nrmean
 
         centroid_diff.clip(min=0, out=centroid_diff)
 
@@ -361,7 +430,7 @@ class SearchEngine():
 
         new_query_vector = np.array(new_query_vector).flatten()
 
-        print(new_query_vector.shape)
+        # print(new_query_vector.shape)
 
         terms = vectorizer.get_feature_names_out()
 
@@ -456,13 +525,44 @@ class SearchEngine():
 
         return tfMatrix
 
+    def use_reinforce(self, query):
+        max_precision = 0
+        for _ in range(0, 10):
+            ranked_docs = self.searchQuery(query, 200)
+
+            if self.query is None:
+                print("Error : No query found. Use searchQuery first to get documents")
+                return
+            metrics = EvaluationMetrics('covid_qrels.txt')
+
+            relevance_list = metrics.relevance_judgements[query]
+
+            relevant_docs = set([doc_id for (doc_id, _) in relevance_list])
+            relevant_doc_ids = list(relevant_docs &
+                                    set(ranked_docs['doc_id']))
+            rl_docs = reinforce.run(
+                ranked_docs, relevant_doc_ids, relevance_list, 20)
+
+            # print(rl_docs)
+
+            metrics = EvaluationMetrics('covid_qrels.txt')
+
+            relevant_list = metrics.relevance_judgements[query]
+            precision = metrics._average_precision(relevant_list, rl_docs)
+
+            # print(f'Precision : {precision}')
+            max_precision = max(precision, max_precision)
+
+        print(max_precision)
+        return max_precision
+
 
 class EvaluationMetrics():
     def __init__(self, file_name) -> None:
         self.relevance_judgements = {}
         dataset = ir_datasets.load("beir/trec-covid")
         self.queries = [query for (_, _, query, _) in dataset.queries_iter()]
-        self.se = SearchEngine('index.txt')
+        self.se = None
 
         with open(file_name, 'r') as file:
             while (True):
@@ -478,6 +578,8 @@ class EvaluationMetrics():
                     self.relevance_judgements[query] = [(doc_id, rel)]
 
     def mean_average_precision(self):
+        if self.se is None:
+            self.se = SearchEngine('index.txt')
 
         mean_avg_prec = 0.0
         total_queries = len(self.queries)
@@ -505,7 +607,7 @@ class EvaluationMetrics():
 
             if len(relevance) > 0:
                 relevant_docs += 1
-                relevance = 0.667 if relevance[0] == 2 else 0.333
+                relevance = 1 if relevance[0] == 2 else 0.5
             else:
                 relevance = 0
 
@@ -520,10 +622,41 @@ class EvaluationMetrics():
         return avg_precision
 
 
-if __name__ == '__main__':
-    engine = SearchEngine('index.txt')
-    res = engine.searchQuery('coronavirus origin')
-    engine.display_result(res)
+def run(engine: SearchEngine):
+    dataset = ir_datasets.load('beir/trec-covid')
+    queries = [query for (_, _, query, _) in dataset.queries_iter()]
 
+    for query in queries:
+        result = engine.searchQuery(query)
+        engine.display_result(result)
+
+    with open('precisions.txt', 'w') as file:
+        for (p1, p2) in engine.precision_output:
+            file.write(f'{p1} {p2}\n')
+
+
+def calculate_precisions(engine: SearchEngine):
+    dataset = ir_datasets.load('beir/trec-covid')
+    queries = [query for (_, _, query, _) in dataset.queries_iter()]
+
+    list = []
+    for query in queries:
+        precision = engine.use_reinforce(query)
+        list.append(precision)
+
+    print(list)
+
+    with open('reinforce_precisions.txt', 'w') as file:
+        for precision in list:
+            file.write(f'{round(precision,3)}\n')
+
+
+if __name__ == '__main__':
+    # engine = SearchEngine('index.txt')
+    # res = engine.searchQuery('coronavirus origin')
+    # new_query = engine.display_result(res)
     # metric = EvaluationMetrics('covid_qrels.txt')
     # print(metric.mean_average_precision())
+
+    engine = SearchEngine('index.txt')
+    run(engine)
